@@ -222,7 +222,7 @@ namespace smart_label
             try
             {
                 await Task.Run(() => PrintTemplate(selectedTemplatePath));
-                MessageBox.Show("打印请求已发送");
+                //MessageBox.Show("打印请求已发送");
                 return true;
             }
             catch (Exception ex)
@@ -448,27 +448,49 @@ namespace smart_label
             if (string.IsNullOrWhiteSpace(templatePath) || !File.Exists(templatePath))
                 return;
 
+            string tempFile = null;
             Engine btEngine = null;
             try
             {
                 btEngine = new Engine(true);
-                // use dynamic to simplify SDK member access at runtime
                 LabelFormatDocument doc = btEngine.Documents.Open(templatePath);
 
-                // ExportImage method available?
                 try
                 {
-                    string imgPath = Path.ChangeExtension(templatePath, ".png");
-                    doc.ExportImageToFile(imgPath, ImageType.BMP, Seagull.BarTender.Print.ColorDepth.ColorDepth256, new Resolution(700, 300
-                    ), OverwriteOptions.Overwrite);
-
-                    // Load the exported image
-                    if (File.Exists(imgPath))
+                    // create temp path with .png extension
+                    tempFile = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N") + ".png");
+                    try
                     {
-                        pictureBoxPreview.Image = new Bitmap(imgPath);
+                        doc.ExportImageToFile(tempFile, ImageType.PNG, Seagull.BarTender.Print.ColorDepth.ColorDepth256, new Resolution(300, 300), OverwriteOptions.Overwrite);
+                    }
+                    catch
+                    {
+                        // fallback to BMP if PNG not supported
+                        string tmpBmp = Path.ChangeExtension(tempFile, ".bmp");
+                        doc.ExportImageToFile(tmpBmp, ImageType.BMP, Seagull.BarTender.Print.ColorDepth.ColorDepth256, new Resolution(300, 300), OverwriteOptions.Overwrite);
+                        if (File.Exists(tmpBmp))
+                        {
+                            // move bmp to our tempFile path so we can delete consistently
+                            File.Move(tmpBmp, tempFile);
+                        }
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(tempFile) && File.Exists(tempFile))
+                    {
+                        // load into memory then delete file
+                        using (var img = Image.FromFile(tempFile))
+                        {
+                            var bmp = new Bitmap(img);
+                            var old = pictureBoxPreview.Image;
+                            pictureBoxPreview.Image = bmp;
+                            old?.Dispose();
+                        }
                     }
                 }
-                catch { }
+                catch
+                {
+                    // ignore preview generation errors
+                }
 
                 // Close via reflection to avoid compile-time enum dependency
                 try
@@ -493,6 +515,14 @@ namespace smart_label
             }
             finally
             {
+                // cleanup temp file
+                try
+                {
+                    if (!string.IsNullOrWhiteSpace(tempFile) && File.Exists(tempFile))
+                        File.Delete(tempFile);
+                }
+                catch { }
+
                 if (btEngine != null)
                 {
                     try { btEngine.Stop(); } catch { }
