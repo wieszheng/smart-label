@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="assets/logo.png" alt="smart-label logo" width="200"/>
+  <img src="logo.png" alt="smart-label logo" width="200"/>
 </p>
 
 <p align="center">
-  <strong>smart-label</strong>
+  <strong>Smart Label</strong>
 </p>
 
 一个基于 Windows Forms 的标签打印小工具，使用 Seagull BarTender SDK 打印 .btw 模板文件并支持：
