@@ -1,9 +1,9 @@
 <p align="center">
-  <img src="logo.png" alt="smart-label logo" width="200"/>
+  <img src="assets/logo.png" alt="smart-label logo" width="200"/>
 </p>
 
 <p align="center">
-  <strong>Smart Label</strong>
+  <strong>smart-label</strong>
 </p>
 
 一个基于 Windows Forms 的标签打印小工具，使用 Seagull BarTender SDK 打印 .btw 模板文件并支持：
@@ -15,6 +15,18 @@
 - 回车在数据源输入间跳转，最后一项回车会触发打印并清空输入
 - 配置保存/加载（保存时需要输入密码以避免误操作）
 
+
+<p align="center">
+  <img src="assets/image1.png" alt="smart-label preview 1" width="520"/>
+</p>
+
+<p align="center">
+  <img src="assets/image2.png" alt="smart-label preview 2" width="520"/>
+</p>
+
+<p align="center">
+  <img src="assets/image3.png" alt="smart-label preview 2" width="520"/>
+</p>
 
 ### 要求
 
@@ -69,7 +81,7 @@
 ### 常见问题
 
 - 无法打印或预览：请确认 BarTender 已安装、许可正确并且程序引用了 `Seagull.BarTender.Print`。
-- 预览失败：检查 BarTender 是否支持 `ExportImage`/`ExportImageToFile`，或查看临时目录权限。
+- 预览失败：检查 BarTender 是否支持`ExportImageToFile`，或查看临时目录权限。
 - 需要在无头/服务环境打印：BarTender 引擎需要相应的运行权限和桌面堆配置，参考 BarTender SDK 文档关于 "non-interactive" 的说明。
 
 ### 开发者说明
@@ -77,5 +89,3 @@
 - 语言：C# (.NET Framework 4.7.2)
 - 主窗体：`smart-label/Form1.cs`，UI 定义为 `Form1.Designer.cs`。
 - 推荐在开发机上安装 BarTender 并调试打印/预览流程。
-
-如需我把 README 添加更多示例、API 调用说明或把预览改为内存渲染，请告诉我要优先实现的选项。
