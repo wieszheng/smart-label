@@ -1,0 +1,9 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="smart-label/smart-label.csproj" Id="7f229679-cfea-4970-85d3-a345c99ae1b3">
+    <Platform Solution="*|x64" Project="x64" />
+  </Project>
+</Solution>
