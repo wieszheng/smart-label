@@ -22,6 +22,8 @@ namespace smart_label
         private Dictionary<int, string> dataSourceFields = new Dictionary<int, string>();
         private int previousCount = 0;
         private bool suppressCountPrompt = false;
+        // indicates a print operation is in progress
+        private volatile bool isPrinting = false;
 
         // helper item for combo box
         private class TemplateItem
@@ -63,6 +65,7 @@ namespace smart_label
                 PopulateTemplateList(templatesFolderPath);
             }
             previousCount = (int)numericUpDownCount.Value;
+            SetStatus("就绪");
         }
 
         private void numericUpDownCount_ValueChanged(object sender, EventArgs e)
@@ -179,11 +182,15 @@ namespace smart_label
 
         // When Enter is pressed in a data source textbox, move focus to the next textbox.
         // If it's the last textbox, trigger printing, then clear inputs and focus the first textbox.
-        private async void DataSourceTextBox_KeyDown(object sender, KeyEventArgs e)
+        private void DataSourceTextBox_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Enter)
             {
                 e.SuppressKeyPress = true; // prevent ding
+
+                // block any input focus changes while a print is in progress
+                if (isPrinting) return;
+
                 var tb = sender as TextBox;
                 if (tb == null) return;
                 // Expect name format txtDataSource_N
@@ -199,46 +206,234 @@ namespace smart_label
                 }
                 else
                 {
-                    // last textbox: start print
-                    bool ok = await PrintSelectedTemplateAsync();
-                    if (ok)
+                    // last textbox: start print synchronously
+                    if (isPrinting) return;
+
+                    if (string.IsNullOrWhiteSpace(selectedTemplatePath) || !File.Exists(selectedTemplatePath))
                     {
+                        MessageBox.Show("请先选择有效的模板文件 (.btw)");
+                        return;
+                    }
+
+                    try
+                    {
+                        //isPrinting = true;
+                        //SetInputsReadOnly(true);
+                        //btnPrintTemplate.Enabled = false;
+                        SetStatus("打印中...");
+                        // ensure UI updates before blocking call
+                        Application.DoEvents();
+
+                        // call synchronous print directly
+                        PrintTemplate(selectedTemplatePath);
+
+                        //System.Threading.Thread.Sleep(1000);
+                        SetStatus("打印完成");
                         ClearInputsAndFocusFirst();
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("打印失败: " + ex.Message);
+                        SetStatus("打印失败");
+                    }
+                    finally
+                    {
+                        isPrinting = false;
+                        SetInputsReadOnly(false);
+                        btnPrintTemplate.Enabled = true;
                     }
                 }
             }
         }
 
-        // Performs the print operation asynchronously. Returns true if printing succeeded (or was requested), false otherwise.
-        private async Task<bool> PrintSelectedTemplateAsync()
+        private void btnPrintTemplate_Click(object sender, EventArgs e)
         {
+            if (isPrinting) return;
+
             if (string.IsNullOrWhiteSpace(selectedTemplatePath) || !File.Exists(selectedTemplatePath))
             {
                 MessageBox.Show("请先选择有效的模板文件 (.btw)");
-                return false;
+                return;
             }
 
-            btnPrintTemplate.Enabled = false;
             try
             {
-                await Task.Run(() => PrintTemplate(selectedTemplatePath));
-                //MessageBox.Show("打印请求已发送");
-                return true;
+                isPrinting = true;
+                SetInputsReadOnly(true);
+                btnPrintTemplate.Enabled = false;
+                SetStatus("打印中...");
+                Application.DoEvents();
+
+                // synchronous print
+                PrintTemplate(selectedTemplatePath);
+                
+                SetStatus("打印完成");
+                ClearInputsAndFocusFirst();
             }
             catch (Exception ex)
             {
                 MessageBox.Show("打印失败: " + ex.Message);
-                return false;
+                SetStatus("打印失败");
             }
             finally
             {
+                SetInputsReadOnly(false);
                 btnPrintTemplate.Enabled = true;
+                isPrinting = false;
+            }
+        }
+
+        private void PrintTemplate(string templatePath)
+        {
+            Engine btEngine = null;
+            try
+            {
+                btEngine = new Engine(true);
+                LabelFormatDocument doc = btEngine.Documents.Open(templatePath);
+
+                // collect missing fields
+                var missingFields = new List<string>();
+
+                // set named substrings DS1, DS2, ... from inputs
+                for (int i = 1; i <= (int)numericUpDownCount.Value; i++)
+                {
+                    var tb = panelInputs.Controls.Find(GetTextBoxName(i), true).FirstOrDefault() as TextBox;
+                    if (tb == null) continue;
+                    string value = tb.Text ?? string.Empty;
+
+                    // prefer configured field mapping if exists, else fall back to DS{i}
+                    string field = dataSourceFields.ContainsKey(i) && !string.IsNullOrWhiteSpace(dataSourceFields[i]) ? dataSourceFields[i] : ("DS" + i);
+
+                    try
+                    {
+                        // access named substring; will throw or be null if not present
+                        var subStrings = doc.SubStrings;
+                        var named = subStrings[field];
+                        if (named != null)
+                        {
+                            named.Value = value;
+                        }
+                        else
+                        {
+                            missingFields.Add(field);
+                        }
+                    }
+                    catch
+                    {
+                        // record missing and continue
+                        missingFields.Add(field);
+                    }
+                }
+
+                if (missingFields.Count > 0)
+                {
+                    // throw with a clear message so the async wrapper can show it in UI thread
+                    var unique = string.Join(", ", missingFields.Distinct());
+                    throw new InvalidOperationException("模板中未找到以下字段: " + unique);
+                }
+
+                try
+                {
+                    doc.PrintSetup.IdenticalCopiesOfLabel = 1;
+                }
+                catch { }
+
+                try
+                {
+                    doc.Print("BarPrint" + DateTime.Now, 1);
+                }
+                catch (Exception ex)
+                {
+                    MessageBox.Show("BarTender PrintOut failed: " + ex.Message);
+                    throw new InvalidOperationException("BarTender PrintOut failed: " + ex.Message, ex);
+                }
+
+                // Close via reflection to avoid compile-time enum dependency
+                try
+                {
+                    var closeMethod = ((object)doc).GetType().GetMethod("Close");
+                    if (closeMethod != null)
+                    {
+                        var parms = closeMethod.GetParameters();
+                        if (parms != null && parms.Length == 1)
+                        {
+                            var enumType = parms[0].ParameterType;
+                            var dontSaveValue = Enum.ToObject(enumType, 0);
+                            closeMethod.Invoke(((object)doc), new object[] { dontSaveValue });
+                        }
+                        else
+                        {
+                            closeMethod.Invoke(((object)doc), null);
+                        }
+                    }
+                }
+                catch { }
+            }
+            finally
+            {
+                if (btEngine != null)
+                {
+                    try { btEngine.Stop(); } catch { }
+                }
+            }
+        }
+
+        // Update the status label safely from any thread
+        private void SetStatus(string text)
+        {
+            if (lblStatus == null) return;
+            if (lblStatus.InvokeRequired)
+            {
+                lblStatus.Invoke((Action)(() => lblStatus.Text = text));
+            }
+            else
+            {
+                lblStatus.Text = text;
+            }
+        }
+
+        // Simple INI helpers using WinAPI
+        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern long WritePrivateProfileString(string section, string key, string val, string filePath);
+
+        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
+        static extern int GetPrivateProfileString(string section, string key, string def, StringBuilder retVal, int size, string filePath);
+
+        private void IniWriteValue(string section, string key, string value, string filePath)
+        {
+            WritePrivateProfileString(section, key, value, filePath);
+        }
+
+        private string IniReadValue(string section, string key, string filePath)
+        {
+            StringBuilder sb = new StringBuilder(2048);
+            GetPrivateProfileString(section, key, string.Empty, sb, sb.Capacity, filePath);
+            return sb.ToString();
+        }
+
+        private string GetTextBoxName(int index) => $"txtDataSource_{index}";
+
+        private void SetInputsReadOnly(bool readOnly)
+        {
+            if (panelInputs.InvokeRequired)
+            {
+                panelInputs.Invoke((Action)(() => SetInputsReadOnly(readOnly)));
+                return;
+            }
+
+            foreach (Control c in panelInputs.Controls)
+            {
+                if (c is TextBox tb)
+                {
+                    tb.ReadOnly = readOnly;
+                    tb.BackColor = readOnly ? SystemColors.Control : SystemColors.Window;
+                    //tb.Enabled = !readOnly;
+                }
             }
         }
 
         private void ClearInputsAndFocusFirst()
         {
-            // Clear all data source textboxes
             var first = panelInputs.Controls.Find(GetTextBoxName(1), true).FirstOrDefault() as TextBox;
             foreach (Control c in panelInputs.Controls)
             {
@@ -247,8 +442,7 @@ namespace smart_label
                     tb.Text = string.Empty;
                 }
             }
-            // focus first if exists
-            if (first != null)
+            if (first != null && !isPrinting)
             {
                 first.Focus();
             }
@@ -273,6 +467,20 @@ namespace smart_label
             string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, IniFileName);
             SaveConfig(path);
             MessageBox.Show("配置已保存: " + path);
+        }
+
+        private void btnLoadConfig_Click(object sender, EventArgs e)
+        {
+            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, IniFileName);
+            if (File.Exists(path))
+            {
+                LoadConfig(path);
+                MessageBox.Show("配置已加载");
+            }
+            else
+            {
+                MessageBox.Show("未找到配置文件: " + path);
+            }
         }
 
         // Shows a simple modal password prompt. Returns entered password or null if cancelled.
@@ -306,20 +514,6 @@ namespace smart_label
                     return tb.Text ?? string.Empty;
                 }
                 return null;
-            }
-        }
-
-        private void btnLoadConfig_Click(object sender, EventArgs e)
-        {
-            string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, IniFileName);
-            if (File.Exists(path))
-            {
-                LoadConfig(path);
-                MessageBox.Show("配置已加载");
-            }
-            else
-            {
-                MessageBox.Show("未找到配置文件: " + path);
             }
         }
 
@@ -445,8 +639,12 @@ namespace smart_label
         private void LoadTemplatePreview(string templatePath)
         {
             pictureBoxPreview.Image = null; // clear existing image
+            SetStatus("生成预览...");
             if (string.IsNullOrWhiteSpace(templatePath) || !File.Exists(templatePath))
+            {
+                SetStatus("就绪");
                 return;
+            }
 
             string tempFile = null;
             Engine btEngine = null;
@@ -527,131 +725,9 @@ namespace smart_label
                 {
                     try { btEngine.Stop(); } catch { }
                 }
+                SetStatus("就绪");
             }
         }
 
-        private string GetTextBoxName(int index) => $"txtDataSource_{index}";
-
-        private async void btnPrintTemplate_Click(object sender, EventArgs e)
-        {
-            bool ok = await PrintSelectedTemplateAsync();
-            if (ok)
-            {
-                ClearInputsAndFocusFirst();
-            }
-        }
-
-        private void PrintTemplate(string templatePath)
-        {
-            Engine btEngine = null;
-            try
-            {
-                btEngine = new Engine(true);
-                LabelFormatDocument doc = btEngine.Documents.Open(templatePath);
-
-                // collect missing fields
-                var missingFields = new List<string>();
-
-                // set named substrings DS1, DS2, ... from inputs
-                for (int i = 1; i <= (int)numericUpDownCount.Value; i++)
-                {
-                    var tb = panelInputs.Controls.Find(GetTextBoxName(i), true).FirstOrDefault() as TextBox;
-                    if (tb == null) continue;
-                    string value = tb.Text ?? string.Empty;
-
-                    // prefer configured field mapping if exists, else fall back to DS{i}
-                    string field = dataSourceFields.ContainsKey(i) && !string.IsNullOrWhiteSpace(dataSourceFields[i]) ? dataSourceFields[i] : ("DS" + i);
-
-                    try
-                    {
-                        // access named substring; will throw or be null if not present
-                        var subStrings = doc.SubStrings;
-                        var named = subStrings[field];
-                        if (named != null)
-                        {
-                            named.Value = value;
-                        }
-                        else
-                        {
-                            missingFields.Add(field);
-                        }
-                    }
-                    catch
-                    {
-                        // record missing and continue
-                        missingFields.Add(field);
-                    }
-                }
-
-                if (missingFields.Count > 0)
-                {
-                    // throw with a clear message so the async wrapper can show it in UI thread
-                    var unique = string.Join(", ", missingFields.Distinct());
-                    throw new InvalidOperationException("模板中未找到以下字段: " + unique);
-                }
-
-                try
-                {
-                    doc.PrintSetup.IdenticalCopiesOfLabel = 1;
-                }
-                catch { }
-
-                try
-                {
-                    doc.Print();
-                }
-                catch (Exception ex)
-                {
-                    throw new InvalidOperationException("BarTender PrintOut failed: " + ex.Message, ex);
-                }
-
-                // Close via reflection to avoid compile-time enum dependency
-                try
-                {
-                    var closeMethod = ((object)doc).GetType().GetMethod("Close");
-                    if (closeMethod != null)
-                    {
-                        var parms = closeMethod.GetParameters();
-                        if (parms != null && parms.Length == 1)
-                        {
-                            var enumType = parms[0].ParameterType;
-                            var dontSaveValue = Enum.ToObject(enumType, 0);
-                            closeMethod.Invoke(((object)doc), new object[] { dontSaveValue });
-                        }
-                        else
-                        {
-                            closeMethod.Invoke(((object)doc), null);
-                        }
-                    }
-                }
-                catch { }
-            }
-            finally
-            {
-                if (btEngine != null)
-                {
-                    try { btEngine.Stop(); } catch { }
-                }
-            }
-        }
-
-        // Simple INI helpers using WinAPI
-        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
-        static extern long WritePrivateProfileString(string section, string key, string val, string filePath);
-
-        [DllImport("kernel32", CharSet = CharSet.Unicode, SetLastError = true)]
-        static extern int GetPrivateProfileString(string section, string key, string def, StringBuilder retVal, int size, string filePath);
-
-        private void IniWriteValue(string section, string key, string value, string filePath)
-        {
-            WritePrivateProfileString(section, key, value, filePath);
-        }
-
-        private string IniReadValue(string section, string key, string filePath)
-        {
-            StringBuilder sb = new StringBuilder(2048);
-            GetPrivateProfileString(section, key, string.Empty, sb, sb.Capacity, filePath);
-            return sb.ToString();
-        }
     }
 }

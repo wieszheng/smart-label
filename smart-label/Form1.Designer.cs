@@ -38,6 +38,7 @@
             this.lblSelectedTemplate = new System.Windows.Forms.Label();
             this.btnPrintTemplate = new System.Windows.Forms.Button();
             this.pictureBoxPreview = new System.Windows.Forms.PictureBox();
+            this.lblStatus = new System.Windows.Forms.Label();
             ((System.ComponentModel.ISupportInitialize)(this.numericUpDownCount)).BeginInit();
             ((System.ComponentModel.ISupportInitialize)(this.pictureBoxPreview)).BeginInit();
             this.SuspendLayout();
@@ -60,6 +61,7 @@
             this.numericUpDownCount.Name = "numericUpDownCount";
             this.numericUpDownCount.Size = new System.Drawing.Size(60, 21);
             this.numericUpDownCount.TabIndex = 1;
+            this.numericUpDownCount.TextAlign = System.Windows.Forms.HorizontalAlignment.Center;
             this.numericUpDownCount.ValueChanged += new System.EventHandler(this.numericUpDownCount_ValueChanged);
             // 
             // lblCount
@@ -135,6 +137,15 @@
             this.pictureBoxPreview.TabIndex = 9;
             this.pictureBoxPreview.TabStop = false;
             // 
+            // lblStatus
+            // 
+            this.lblStatus.AutoSize = true;
+            this.lblStatus.Location = new System.Drawing.Point(12, 115);
+            this.lblStatus.Name = "lblStatus";
+            this.lblStatus.Size = new System.Drawing.Size(29, 12);
+            this.lblStatus.TabIndex = 10;
+            this.lblStatus.Text = "就绪";
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 12F);
@@ -148,6 +159,7 @@
             this.Controls.Add(this.btnSaveConfig);
             this.Controls.Add(this.lblCount);
             this.Controls.Add(this.numericUpDownCount);
+            this.Controls.Add(this.lblStatus);
             this.Controls.Add(this.panelInputs);
             this.Icon = ((System.Drawing.Icon)(resources.GetObject("$this.Icon")));
             this.Name = "Form1";
@@ -171,6 +183,7 @@
         private System.Windows.Forms.Label lblSelectedTemplate;
         private System.Windows.Forms.Button btnPrintTemplate;
         private System.Windows.Forms.PictureBox pictureBoxPreview;
+        private System.Windows.Forms.Label lblStatus;
     }
 }
 
