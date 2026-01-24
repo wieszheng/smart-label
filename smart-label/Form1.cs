@@ -25,6 +25,15 @@ namespace smart_label
         // indicates a print operation is in progress
         private volatile bool isPrinting = false;
 
+        // 日志级别枚举
+        private enum LogLevel
+        {
+            Info,
+            Success,
+            Warning,
+            Error
+        }
+
         // helper item for combo box
         private class TemplateItem
         {
@@ -66,6 +75,7 @@ namespace smart_label
             }
             previousCount = (int)numericUpDownCount.Value;
             SetStatus("就绪");
+            AddLog("系统启动完成", LogLevel.Info);
         }
 
         private void numericUpDownCount_ValueChanged(object sender, EventArgs e)
@@ -89,6 +99,7 @@ namespace smart_label
                      dataSourceNames[i] = cfg.Name;
                      dataSourceFields[i] = cfg.Field;
                  }
+                 AddLog($"数据源数量从 {previousCount} 增加到 {newCount}", LogLevel.Info);
              }
              else if (newCount < previousCount)
              {
@@ -98,6 +109,7 @@ namespace smart_label
                      if (dataSourceNames.ContainsKey(i)) dataSourceNames.Remove(i);
                      if (dataSourceFields.ContainsKey(i)) dataSourceFields.Remove(i);
                  }
+                 AddLog($"数据源数量从 {previousCount} 减少到 {newCount}", LogLevel.Info);
              }
 
              CreateInputControls(newCount);
@@ -153,40 +165,91 @@ namespace smart_label
 
         private void CreateInputControls(int count)
         {
-            panelInputs.Controls.Clear();
+            // 1. 基础校验，避免空引用和非法参数
+            if (panelInputs == null)
+            {
+                MessageBox.Show("面板控件未初始化！");
+                return;
+            }
+            if (count < 0 || count > 100) // 限制最大创建数量，可根据实际调整
+            {
+                MessageBox.Show("控件数量必须在0-100之间！");
+                return;
+            }
+
+            // 2. 彻底清理旧控件（包括移除事件绑定，避免内存泄漏）
+            ClearOldControls();
+
+            // 3. 批量创建控件，减少布局计算次数
             panelInputs.SuspendLayout();
             int top = 10;
+            int labelWidth = 80; // 固定Label宽度，避免重叠
+            int textBoxMinWidth = 100;
+
             for (int i = 1; i <= count; i++)
             {
-                var lbl = new Label();
-                string labelName = dataSourceNames.ContainsKey(i) ? dataSourceNames[i] : $"数据源 {i}";
-                lbl.Text = labelName + ":";
-                lbl.AutoSize = true;
-                lbl.Location = new Point(10, top + 3);
+                // 创建Label并优化布局
+                var lbl = new Label
+                {
+                    Text = (dataSourceNames?.ContainsKey(i) == true ? dataSourceNames[i] : $"数据源 {i}") + ":",
+                    AutoSize = false, // 关闭自动大小，固定宽度
+                    Size = new Size(labelWidth, 21), // 与TextBox高度一致
+                    Location = new Point(10, top),
+                    TextAlign = ContentAlignment.MiddleRight, // 文字右对齐，更美观
+                    Anchor = AnchorStyles.Top | AnchorStyles.Left // 跟随面板左边缘
+                };
 
-                var txt = new TextBox();
-                txt.Name = GetTextBoxName(i);
-                // make textbox stretch to panel width
-                txt.Location = new Point(90, top);
-                txt.Size = new Size(Math.Max(100, panelInputs.ClientSize.Width - 110), 21);
-                txt.Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right;
+                // 创建TextBox并优化布局
+                var txt = new TextBox
+                {
+                    Name = GetTextBoxName(i),
+                    Location = new Point(lbl.Right + 5, top), // 基于Label位置计算，避免硬编码
+                    Anchor = AnchorStyles.Top | AnchorStyles.Left | AnchorStyles.Right,
+                    Height = 21 // 固定高度，统一样式
+                };
+                // 动态计算TextBox宽度（兼容面板大小变化）
+                int textBoxWidth = Math.Max(textBoxMinWidth, panelInputs.ClientSize.Width - txt.Left - 10);
+                txt.Size = new Size(textBoxWidth, txt.Height);
+
+                // 绑定事件（确保每次只绑定一次）
+                txt.KeyDown -= DataSourceTextBox_KeyDown; // 先移除再添加，避免重复绑定
                 txt.KeyDown += DataSourceTextBox_KeyDown;
 
+                // 添加到面板
                 panelInputs.Controls.Add(lbl);
                 panelInputs.Controls.Add(txt);
 
-                top += 35;
+                // 动态调整间距（基于控件高度，适配不同DPI）
+                top += txt.Height + 14; // 控件高度+间距，比固定35更灵活
             }
-            panelInputs.ResumeLayout();
+
+            panelInputs.ResumeLayout(true); // true表示立即执行布局更新
         }
 
-        // When Enter is pressed in a data source textbox, move focus to the next textbox.
-        // If it's the last textbox, trigger printing, then clear inputs and focus the first textbox.
+        /// <summary>
+        /// 彻底清理旧控件，移除事件绑定并释放资源
+        /// </summary>
+        private void ClearOldControls()
+        {
+            if (panelInputs?.Controls == null) return;
+
+            // 遍历所有控件，移除事件绑定
+            foreach (Control ctrl in panelInputs.Controls)
+            {
+                if (ctrl is TextBox txt)
+                {
+                    txt.KeyDown -= DataSourceTextBox_KeyDown; // 移除事件绑定
+                }
+            }
+            // 清除所有控件
+            panelInputs.Controls.Clear();
+        }
+
         private void DataSourceTextBox_KeyDown(object sender, KeyEventArgs e)
         {
             if (e.KeyCode == Keys.Enter)
             {
-                e.SuppressKeyPress = true; // prevent ding
+                e.SuppressKeyPress = true; // 消除回车的提示音
 
                 // block any input focus changes while a print is in progress
                 if (isPrinting) return;
@@ -221,20 +284,23 @@ namespace smart_label
                         //SetInputsReadOnly(true);
                         //btnPrintTemplate.Enabled = false;
                         SetStatus("打印中...");
+                        AddLog("开始打印操作", LogLevel.Info);
                         // ensure UI updates before blocking call
-                        Application.DoEvents();
+                        //Application.DoEvents();
 
                         // call synchronous print directly
                         PrintTemplate(selectedTemplatePath);
 
                         //System.Threading.Thread.Sleep(1000);
                         SetStatus("打印完成");
+                        AddLog("打印完成", LogLevel.Success);
                         ClearInputsAndFocusFirst();
                     }
                     catch (Exception ex)
                     {
                         MessageBox.Show("打印失败: " + ex.Message);
                         SetStatus("打印失败");
+                        AddLog($"打印失败: {ex.Message}", LogLevel.Error);
                     }
                     finally
                     {
@@ -262,18 +328,21 @@ namespace smart_label
                 SetInputsReadOnly(true);
                 btnPrintTemplate.Enabled = false;
                 SetStatus("打印中...");
-                Application.DoEvents();
+                AddLog("开始打印操作", LogLevel.Info);
+                //Application.DoEvents();
 
                 // synchronous print
                 PrintTemplate(selectedTemplatePath);
-                
+
                 SetStatus("打印完成");
+                AddLog("打印完成", LogLevel.Success);
                 ClearInputsAndFocusFirst();
             }
             catch (Exception ex)
             {
                 MessageBox.Show("打印失败: " + ex.Message);
                 SetStatus("打印失败");
+                AddLog($"打印失败: {ex.Message}", LogLevel.Error);
             }
             finally
             {
@@ -331,12 +400,6 @@ namespace smart_label
                     var unique = string.Join(", ", missingFields.Distinct());
                     throw new InvalidOperationException("模板中未找到以下字段: " + unique);
                 }
-
-                try
-                {
-                    doc.PrintSetup.IdenticalCopiesOfLabel = 1;
-                }
-                catch { }
 
                 try
                 {
@@ -466,6 +529,7 @@ namespace smart_label
 
             string path = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, IniFileName);
             SaveConfig(path);
+            AddLog($"配置已保存到: {path}", LogLevel.Success);
             MessageBox.Show("配置已保存: " + path);
         }
 
@@ -475,10 +539,12 @@ namespace smart_label
             if (File.Exists(path))
             {
                 LoadConfig(path);
+                AddLog($"配置已从 {path} 加载", LogLevel.Success);
                 MessageBox.Show("配置已加载");
             }
             else
             {
+                AddLog($"未找到配置文件: {path}", LogLevel.Warning);
                 MessageBox.Show("未找到配置文件: " + path);
             }
         }
@@ -627,6 +693,7 @@ namespace smart_label
                 selectedTemplatePath = item.FullPath;
                 lblSelectedTemplate.Text = item.Name;
                 LoadTemplatePreview(selectedTemplatePath);
+                AddLog($"已选择模板: {item.Name}", LogLevel.Info);
             }
             else
             {
@@ -726,6 +793,109 @@ namespace smart_label
                     try { btEngine.Stop(); } catch { }
                 }
                 SetStatus("就绪");
+            }
+        }
+
+        /// <summary>
+        /// 添加日志信息到日志显示框
+        /// </summary>
+        /// <param name="message">日志消息</param>
+        /// <param name="level">日志级别</param>
+        private void AddLog(string message, LogLevel level = LogLevel.Info)
+        {
+            if (textBoxLog == null) return;
+
+            string timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss");
+            string levelText = GetLogLevelText(level);
+            string logLine = $"[{timestamp}] [{levelText}] {message}";
+
+            if (textBoxLog.InvokeRequired)
+            {
+                textBoxLog.Invoke((Action)(() => AddLog(message, level)));
+                return;
+            }
+
+            textBoxLog.AppendText(logLine + Environment.NewLine);
+            textBoxLog.ScrollToCaret();
+
+            // 限制日志行数,最多保留1000行
+            if (textBoxLog.Lines.Length > 1000)
+            {
+                string[] lines = textBoxLog.Lines;
+                string[] newLines = new string[1000];
+                Array.Copy(lines, lines.Length - 1000, newLines, 0, 1000);
+                textBoxLog.Lines = newLines;
+            }
+        }
+
+        /// <summary>
+        /// 获取日志级别文本
+        /// </summary>
+        /// <param name="level">日志级别</param>
+        /// <returns>日志级别文本</returns>
+        private string GetLogLevelText(LogLevel level)
+        {
+            switch (level)
+            {
+                case LogLevel.Success:
+                    return "成功";
+                case LogLevel.Warning:
+                    return "警告";
+                case LogLevel.Error:
+                    return "错误";
+                case LogLevel.Info:
+                default:
+                    return "信息";
+            }
+        }
+
+        /// <summary>
+        /// 清空日志按钮点击事件
+        /// </summary>
+        private void btnClearLog_Click(object sender, EventArgs e)
+        {
+            if (textBoxLog.InvokeRequired)
+            {
+                textBoxLog.Invoke((Action)(() => btnClearLog_Click(sender, e)));
+                return;
+            }
+
+            textBoxLog.Clear();
+            AddLog("日志已清空", LogLevel.Info);
+        }
+
+        /// <summary>
+        /// 导出日志按钮点击事件
+        /// </summary>
+        private void btnExportLog_Click(object sender, EventArgs e)
+        {
+            if (string.IsNullOrWhiteSpace(textBoxLog.Text))
+            {
+                MessageBox.Show("日志为空,无需导出", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            try
+            {
+                using (SaveFileDialog sfd = new SaveFileDialog())
+                {
+                    sfd.Filter = "文本文件 (*.txt)|*.txt|日志文件 (*.log)|*.log|所有文件 (*.*)|*.*";
+                    sfd.DefaultExt = "log";
+                    sfd.FileName = $"smart_label_log_{DateTime.Now:yyyyMMdd_HHmmss}.log";
+                    sfd.Title = "导出日志";
+
+                    if (sfd.ShowDialog(this) == DialogResult.OK)
+                    {
+                        File.WriteAllText(sfd.FileName, textBoxLog.Text, Encoding.UTF8);
+                        AddLog($"日志已导出到: {sfd.FileName}", LogLevel.Success);
+                        MessageBox.Show($"日志已成功导出到:\n{sfd.FileName}", "导出成功", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"导出日志失败: {ex.Message}", LogLevel.Error);
+                MessageBox.Show($"导出日志失败: {ex.Message}", "错误", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 
